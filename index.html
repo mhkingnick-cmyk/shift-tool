@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>保育園シフト自動割当ツール</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <h1>保育園シフト自動割当ツール</h1>
+
+    <!-- ① Excelアップロード -->
+    <section id="section-upload">
+      <h2>1. 勤務表Excelをアップロード</h2>
+      <input type="file" id="input-excel" accept=".xlsx">
+      <p id="upload-status"></p>
+    </section>
+
+    <!-- ② パラメータ入力 -->
+    <section id="section-params">
+      <h2>2. 月間パラメータ</h2>
+      <label>公休日数：<input type="number" id="param-holiday-count" min="0" max="31" value="9"></label>
+
+      <div id="medical-care-section">
+        <h3>医療的ケア児（該当する場合のみ入力）</h3>
+        <div id="medical-care-list"></div>
+        <button id="btn-add-medical-care">＋ 追加</button>
+      </div>
+    </section>
+
+    <!-- ③ 実行ボタン -->
+    <section id="section-run">
+      <h2>3. 自動割当を実行</h2>
+      <button id="btn-run" disabled>自動割当を実行</button>
+    </section>
+
+    <!-- ④ ダウンロード -->
+    <section id="section-download" style="display:none">
+      <h2>4. 結果をダウンロード</h2>
+      <button id="btn-download">Excelをダウンロード</button>
+    </section>
+
+    <!-- ⑤ エラー一覧 -->
+    <section id="section-errors" style="display:none">
+      <h2>未割当・制約違反の一覧</h2>
+      <ul id="error-list"></ul>
+    </section>
+  </div>
+
+  <!-- SheetJS (CDN) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="js/holidays.js"></script>
+  <script src="js/staffMaster.js"></script>
+  <script src="js/shiftMaster.js"></script>
+  <script src="js/excel.js"></script>
+  <script src="js/scheduler.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

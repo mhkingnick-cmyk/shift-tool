@@ -1,0 +1,73 @@
+body {
+  font-family: "Meiryo", "Hiragino Sans", sans-serif;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+  background: #f5f5f5;
+  color: #333;
+}
+
+h1 {
+  font-size: 1.5rem;
+  border-bottom: 2px solid #4a90a4;
+  padding-bottom: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  color: #4a90a4;
+  margin-top: 0;
+}
+
+section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+button {
+  background: #4a90a4;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.6rem 1.4rem;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #aaa;
+  cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+  background: #357a8a;
+}
+
+input[type="file"],
+input[type="number"] {
+  margin-top: 0.5rem;
+  font-size: 1rem;
+}
+
+#error-list {
+  color: #c0392b;
+  padding-left: 1.5rem;
+}
+
+#error-list li {
+  margin-bottom: 0.3rem;
+}
+
+#upload-status {
+  margin-top: 0.5rem;
+  color: #2d7a2d;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.8rem;
+}
