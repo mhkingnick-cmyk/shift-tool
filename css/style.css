@@ -71,3 +71,59 @@ label {
   display: block;
   margin-bottom: 0.8rem;
 }
+
+/* 医療的ケア児 */
+.medical-care-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.5rem;
+  background: #f0f7fa;
+  border-radius: 6px;
+  border: 1px solid #c8e0ea;
+}
+
+.medical-care-row label {
+  display: inline;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.mc-label {
+  font-size: 0.9rem;
+  font-weight: bold;
+  margin-right: 0.2rem;
+}
+
+.mc-start,
+.mc-end {
+  font-size: 0.9rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+}
+
+.mc-remove {
+  background: #c0392b;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  margin-left: auto;
+}
+
+.mc-remove:hover:not(:disabled) {
+  background: #922b21;
+}
+
+#btn-add-medical-care {
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.9rem;
+}
+
+#medical-care-section h3 {
+  font-size: 1rem;
+  color: #555;
+  margin-bottom: 0.6rem;
+}

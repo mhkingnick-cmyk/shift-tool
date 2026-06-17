@@ -30,12 +30,17 @@ function runScheduler(parsed, params) {
   // STEP2: 早出割当
   step2AssignEarlyShifts(assignments, allDates, workDates, violations);
 
-  // STEP3〜7: 今後実装
-  // TODO: STEP3 遅出割当
-  // TODO: STEP4 医療的ケア児看護師配置
-  // TODO: STEP5 日勤割当
-  // TODO: STEP6 制約検証
-  // TODO: STEP7 出力準備
+  // STEP3: 遅出割当
+  step3AssignLateShifts(assignments, allDates, workDates, violations);
+
+  // STEP4: 医療的ケア児看護師配置
+  step4AssignMedicalCareNurse(assignments, allDates, workDates, medicalCareChildren, violations);
+
+  // STEP5: 日勤割当
+  step5AssignDayShifts(assignments, allDates, workDates);
+
+  // STEP6: 最終検証
+  step6Validate(assignments, allDates, workDates, holidays, violations);
 
   return { year, month, assignments, violations };
 }
@@ -309,6 +314,274 @@ function step2AssignEarlyShifts(assignments, allDates, workDates, violations) {
 }
 
 // ────────────────────────────────────────────────
+// STEP3: 遅出割当
+// ────────────────────────────────────────────────
+function step3AssignLateShifts(assignments, allDates, workDates, violations) {
+  const fairIds = STAFF_MASTER.filter(s => s.isAutoTarget && s.fairness).map(s => s.id);
+  // 遅出調整弁：15番のみ（adjuster === "both"）
+  const adjusterIds = STAFF_MASTER
+    .filter(s => s.isAutoTarget && (s.adjuster === "late" || s.adjuster === "both"))
+    .sort((a, b) => a.adjusterPriority - b.adjusterPriority)
+    .map(s => s.id);
+
+  // 月の遅出カウントを固定セル分で初期化
+  const lateCounts = {};
+  fairIds.forEach(id => { lateCounts[id] = 0; });
+  for (const dateStr of workDates) {
+    for (const id of fairIds) {
+      const e = assignments[id] && assignments[id][dateStr];
+      if (e && e.isFixed && e.shiftCode && LATE_CODES.includes(e.shiftCode)) lateCounts[id]++;
+    }
+  }
+
+  for (const dateStr of workDates) {
+    // 既確定の遅出をカウント
+    let fixedLateCount = 0;
+    const alreadyLateIds = new Set();
+    for (const id of [...fairIds, ...adjusterIds]) {
+      const e = assignments[id] && assignments[id][dateStr];
+      if (e && e.shiftCode && LATE_CODES.includes(e.shiftCode)) {
+        fixedLateCount++;
+        alreadyLateIds.add(id);
+      }
+    }
+
+    if (fixedLateCount >= 2) continue;
+
+    const needed   = 2 - fixedLateCount;
+    const assigned = [];
+
+    const available = fairIds.filter(id =>
+      !alreadyLateIds.has(id) && canAssignShift(assignments[id], id, dateStr, allDates, "late")
+    );
+    const byCount = (a, b) => lateCounts[a] - lateCounts[b];
+    const sorted  = [...available].sort(byCount);
+
+    for (const id of sorted) {
+      if (assigned.length >= needed) break;
+      doAssign(assignments[id], dateStr, "D");
+      lateCounts[id]++;
+      alreadyLateIds.add(id);
+      assigned.push(id);
+    }
+
+    // 公平分配だけでは不足 → 調整弁（15番のみ）
+    if (assigned.length < needed) {
+      for (const id of adjusterIds) {
+        if (assigned.length >= needed) break;
+        if (alreadyLateIds.has(id)) continue;
+        const days = assignments[id];
+        if (!canAssignShift(days, id, dateStr, allDates, "late")) continue;
+        doAssign(days, dateStr, "D");
+        alreadyLateIds.add(id);
+        assigned.push(id);
+      }
+    }
+
+    const total = fixedLateCount + assigned.length;
+    if (total < 2) {
+      violations.push({
+        date: dateStr,
+        type: "late_shortage",
+        required: 2,
+        actual: total,
+        message: `${dateStr}：遅出が ${total} 名（最低2名必要）`
+      });
+    }
+  }
+}
+
+// ────────────────────────────────────────────────
+// STEP4: 医療的ケア児看護師配置
+// ────────────────────────────────────────────────
+function step4AssignMedicalCareNurse(assignments, allDates, workDates, medicalCareChildren, violations) {
+  if (!medicalCareChildren || medicalCareChildren.length === 0) return;
+
+  const nurseIds = STAFF_MASTER.filter(s => s.type === "nurse" && s.isAutoTarget).map(s => s.id);
+
+  // 曜日ごとに必要時間帯（複数児の包絡）を計算
+  const weekdayRanges = {};
+  for (const child of medicalCareChildren) {
+    for (const wd of (child.weekdays || [])) {
+      const newS = child.startH * 60 + child.startM;
+      const newE = child.endH   * 60 + child.endM;
+      if (!weekdayRanges[wd]) {
+        weekdayRanges[wd] = { startH: child.startH, startM: child.startM, endH: child.endH, endM: child.endM };
+      } else {
+        const cur  = weekdayRanges[wd];
+        const curS = cur.startH * 60 + cur.startM;
+        const curE = cur.endH   * 60 + cur.endM;
+        if (newS < curS) { cur.startH = child.startH; cur.startM = child.startM; }
+        if (newE > curE) { cur.endH   = child.endH;   cur.endM   = child.endM;   }
+      }
+    }
+  }
+
+  for (const dateStr of workDates) {
+    const weekday = new Date(dateStr).getDay();
+    const req = weekdayRanges[weekday];
+    if (!req) continue;
+
+    // いずれかの看護師が既に要求範囲をカバーしているか確認
+    const alreadyCovered = nurseIds.some(id => {
+      const e = assignments[id] && assignments[id][dateStr];
+      if (!e || !e.shiftCode || OFF_CODES.includes(e.shiftCode) || e.isAbsent) return false;
+      return coversTimeRange(e.shiftCode, req.startH, req.startM, req.endH, req.endM);
+    });
+    if (alreadyCovered) continue;
+
+    // カバー未達 → 看護師に適切なシフトを割当
+    let assigned = false;
+    for (const id of nurseIds) {
+      const days = assignments[id];
+      if (!days) continue;
+      const e = days[dateStr];
+      if (e && (e.isFixed || e.isAbsent || e.shiftCode)) continue;
+
+      // 要求時間帯をカバーする最適シフト（日勤優先 → 次点でその他）
+      const covering =
+        SHIFT_TYPES.find(st => !st.halfDay && !st.partOnly && st.category === "day" &&
+          coversTimeRange(st.code, req.startH, req.startM, req.endH, req.endM)) ||
+        SHIFT_TYPES.find(st => !st.halfDay && !st.partOnly && st.category !== "off" &&
+          coversTimeRange(st.code, req.startH, req.startM, req.endH, req.endM));
+      if (!covering) continue;
+
+      if (!canAssignShift(days, id, dateStr, allDates, covering.category)) continue;
+
+      doAssign(days, dateStr, covering.code);
+      assigned = true;
+      break;
+    }
+
+    if (!assigned) {
+      const pad = n => String(n).padStart(2, "0");
+      violations.push({
+        date: dateStr,
+        type: "medical_care_nurse_missing",
+        message: `${dateStr}：医療的ケア児対応の看護師を確保できませんでした（${req.startH}:${pad(req.startM)}〜${req.endH}:${pad(req.endM)}）`
+      });
+    }
+  }
+}
+
+// ────────────────────────────────────────────────
+// STEP5: 日勤割当
+// ────────────────────────────────────────────────
+function step5AssignDayShifts(assignments, allDates, workDates) {
+  const autoTargetIds = STAFF_MASTER
+    .filter(s => s.isAutoTarget && !s.isFixed)
+    .map(s => s.id);
+
+  for (const dateStr of workDates) {
+    for (const id of autoTargetIds) {
+      const days = assignments[id];
+      if (!days) continue;
+      const e = days[dateStr];
+      if (e && (e.isFixed || e.isAbsent || e.shiftCode)) continue;
+
+      const staff = STAFF_MASTER.find(s => s.id === id);
+      const code  = staff.type === "part_nursery" ? "P2" : "B";
+      doAssign(days, dateStr, code);
+    }
+  }
+}
+
+// ────────────────────────────────────────────────
+// STEP6: 最終検証
+// ────────────────────────────────────────────────
+function step6Validate(assignments, allDates, workDates, holidays, violations) {
+  const nurseIds       = STAFF_MASTER.filter(s => s.type === "nurse" && s.isAutoTarget).map(s => s.id);
+  const allAutoTargets = STAFF_MASTER.filter(s => s.isAutoTarget).map(s => s.id);
+
+  for (const dateStr of workDates) {
+    const isSat = new Date(dateStr).getDay() === 6;
+
+    // 看護師2名同時休チェック
+    if (nurseIds.length >= 2) {
+      const allNursesOff = nurseIds.every(id => {
+        const e = assignments[id] && assignments[id][dateStr];
+        return !e || !e.shiftCode || OFF_CODES.includes(e.shiftCode);
+      });
+      if (allNursesOff) {
+        violations.push({
+          date: dateStr,
+          type: "both_nurses_off",
+          message: `${dateStr}：看護師が全員休み（同日休は不可）`
+        });
+      }
+    }
+
+    // 平日：日勤帯（早出＋日勤）の合計最低4名チェック
+    if (!isSat) {
+      const dayBandCount = allAutoTargets.filter(id => {
+        const e = assignments[id] && assignments[id][dateStr];
+        if (!e || !e.shiftCode || e.isAbsent) return false;
+        if (OFF_CODES.includes(e.shiftCode)) return false;
+        if (LATE_CODES.includes(e.shiftCode)) return false;
+        return true;
+      }).length;
+      if (dayBandCount < 4) {
+        violations.push({
+          date: dateStr,
+          type: "day_band_shortage",
+          required: 4,
+          actual: dayBandCount,
+          message: `${dateStr}：日勤帯（早出＋日勤）が ${dayBandCount} 名（最低4名必要）`
+        });
+      }
+    }
+  }
+
+  // 6連勤チェック（全自動割当対象職員）
+  for (const id of allAutoTargets) {
+    const days = assignments[id];
+    if (!days) continue;
+    let consecutive = 0;
+    for (const dateStr of allDates) {
+      if (isClosedDay(dateStr, holidays)) { consecutive = 0; continue; }
+      const e = days[dateStr];
+      const isOff    = e && e.shiftCode && OFF_CODES.includes(e.shiftCode);
+      const isAbsent = e && e.isAbsent;
+      if (isOff || isAbsent) {
+        consecutive = 0;
+      } else {
+        consecutive++;
+        if (consecutive > 5) {
+          violations.push({
+            date: dateStr,
+            type: "consecutive_days_exceeded",
+            staffId: id,
+            message: `職員${id}番：${dateStr}で6連勤以上（上限5連勤）`
+          });
+          consecutive = 0;
+        }
+      }
+    }
+  }
+
+  // 6番看護師：遅出翌日早出の最終チェック
+  const nurse6Days = assignments[6];
+  if (nurse6Days) {
+    for (let i = 1; i < allDates.length; i++) {
+      const prevDate = allDates[i - 1];
+      const curDate  = allDates[i];
+      const prevE = nurse6Days[prevDate];
+      const curE  = nurse6Days[curDate];
+      if (
+        prevE && prevE.shiftCode && LATE_CODES.includes(prevE.shiftCode) &&
+        curE  && curE.shiftCode  && EARLY_CODES.includes(curE.shiftCode)
+      ) {
+        violations.push({
+          date: curDate,
+          type: "nurse6_late_early_consecutive",
+          message: `${curDate}：6番看護師が遅出翌日に早出（制約違反）`
+        });
+      }
+    }
+  }
+}
+
+// ────────────────────────────────────────────────
 // ユーティリティ
 // ────────────────────────────────────────────────
 
@@ -320,10 +593,19 @@ function canAssignShift(days, staffId, dateStr, allDates, category) {
   // 固定・不在・既に割当済みなら不可
   if (e && (e.isFixed || e.isAbsent || e.shiftCode)) return false;
 
-  // 6番看護師ルール：前日が遅出なら翌日早出不可
-  if (category === "early" && staffId === 6) {
-    const prev = days[getPrevDate(dateStr, allDates)];
-    if (prev && prev.shiftCode && LATE_CODES.includes(prev.shiftCode)) return false;
+  if (staffId === 6) {
+    // 前日が遅出なら当日早出不可
+    if (category === "early") {
+      const prevDate = getPrevDate(dateStr, allDates);
+      const prev = prevDate && days[prevDate];
+      if (prev && prev.shiftCode && LATE_CODES.includes(prev.shiftCode)) return false;
+    }
+    // 翌日が早出確定なら当日遅出不可
+    if (category === "late") {
+      const nextDate = getNextDate(dateStr, allDates);
+      const next = nextDate && days[nextDate];
+      if (next && next.shiftCode && EARLY_CODES.includes(next.shiftCode)) return false;
+    }
   }
   return true;
 }
@@ -332,6 +614,12 @@ function canAssignShift(days, staffId, dateStr, allDates, category) {
 function getPrevDate(dateStr, allDates) {
   const idx = allDates.indexOf(dateStr);
   return idx > 0 ? allDates[idx - 1] : null;
+}
+
+// allDates 内での翌日日付を返す
+function getNextDate(dateStr, allDates) {
+  const idx = allDates.indexOf(dateStr);
+  return (idx >= 0 && idx < allDates.length - 1) ? allDates[idx + 1] : null;
 }
 
 // 指定セルにシフトコードを書き込む

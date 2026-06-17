@@ -48,7 +48,48 @@ document.getElementById("btn-run").addEventListener("click", () => {
   };
 });
 
+// ────────────────────────────────────────────────
+// 医療的ケア児UI
+// ────────────────────────────────────────────────
+let _medicalCareCount = 0;
+
+document.getElementById("btn-add-medical-care").addEventListener("click", () => {
+  _medicalCareCount++;
+  const id  = _medicalCareCount;
+  const list = document.getElementById("medical-care-list");
+  const row  = document.createElement("div");
+  row.className   = "medical-care-row";
+  row.dataset.mcId = id;
+
+  const weekdays = [["月", 1], ["火", 2], ["水", 3], ["木", 4], ["金", 5], ["土", 6]];
+  const cbHtml = weekdays.map(([label, val]) =>
+    `<label><input type="checkbox" name="mc-wd-${id}" value="${val}"> ${label}</label>`
+  ).join(" ");
+
+  row.innerHTML = `
+    <span class="mc-label">曜日：</span>${cbHtml}
+    <span class="mc-label">時間：</span>
+    <input type="time" class="mc-start" value="10:00">
+    〜
+    <input type="time" class="mc-end" value="14:00">
+    <button class="mc-remove" onclick="this.closest('.medical-care-row').remove()">削除</button>
+  `;
+  list.appendChild(row);
+});
+
 function getMedicalCareParams() {
-  // TODO: UIから医療的ケア児パラメータを収集
-  return [];
+  const rows   = document.querySelectorAll(".medical-care-row");
+  const result = [];
+  for (const row of rows) {
+    const weekdays = [...row.querySelectorAll("input[type=checkbox]:checked")]
+      .map(cb => Number(cb.value));
+    if (weekdays.length === 0) continue;
+    const startVal = row.querySelector(".mc-start").value;
+    const endVal   = row.querySelector(".mc-end").value;
+    if (!startVal || !endVal) continue;
+    const [startH, startM] = startVal.split(":").map(Number);
+    const [endH,   endM  ] = endVal.split(":").map(Number);
+    result.push({ weekdays, startH, startM, endH, endM });
+  }
+  return result;
 }
