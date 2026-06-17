@@ -27,8 +27,10 @@ function runScheduler(parsed, params) {
   // STEP1: 公休割当
   step1AssignHolidays(assignments, allDates, workDates, holidays, holidayCount, violations);
 
-  // STEP2〜7: 今後実装
-  // TODO: STEP2 早出割当
+  // STEP2: 早出割当
+  step2AssignEarlyShifts(assignments, allDates, workDates, violations);
+
+  // STEP3〜7: 今後実装
   // TODO: STEP3 遅出割当
   // TODO: STEP4 医療的ケア児看護師配置
   // TODO: STEP5 日勤割当
@@ -185,8 +187,158 @@ function distributeEvenly(days, candidates, count, assignedSet) {
 }
 
 // ────────────────────────────────────────────────
+// STEP2: 早出割当
+// ────────────────────────────────────────────────
+function step2AssignEarlyShifts(assignments, allDates, workDates, violations) {
+  // 公平分配対象（1,2,6,7番）
+  const fairIds = STAFF_MASTER.filter(s => s.isAutoTarget && s.fairness).map(s => s.id);
+  // 早出調整弁（優先度順：9番→15番）
+  const adjusterIds = STAFF_MASTER
+    .filter(s => s.isAutoTarget && (s.adjuster === "early" || s.adjuster === "both"))
+    .sort((a, b) => a.adjusterPriority - b.adjusterPriority)
+    .map(s => s.id);
+
+  // 月の早出カウントを固定セル分で初期化
+  const earlyCounts = {};
+  fairIds.forEach(id => { earlyCounts[id] = 0; });
+  for (const dateStr of workDates) {
+    for (const id of fairIds) {
+      const e = assignments[id] && assignments[id][dateStr];
+      if (e && e.isFixed && e.shiftCode && EARLY_CODES.includes(e.shiftCode)) {
+        earlyCounts[id]++;
+      }
+    }
+  }
+
+  // 土曜早出の達成状況を固定セル分で初期化
+  const satEarlyDone = {};
+  fairIds.forEach(id => { satEarlyDone[id] = false; });
+  const satWorkDates = workDates.filter(d => new Date(d).getDay() === 6);
+  for (const dateStr of satWorkDates) {
+    for (const id of fairIds) {
+      const e = assignments[id] && assignments[id][dateStr];
+      if (e && e.shiftCode && EARLY_CODES.includes(e.shiftCode)) {
+        satEarlyDone[id] = true;
+      }
+    }
+  }
+
+  // 日ごとに早出を割当
+  for (const dateStr of workDates) {
+    const isSat = new Date(dateStr).getDay() === 6;
+
+    // 既確定の早出をカウント（固定 or STEP1以前に割当済み）
+    let fixedEarlyCount = 0;
+    const alreadyEarlyIds = new Set();
+    for (const id of [...fairIds, ...adjusterIds]) {
+      const e = assignments[id] && assignments[id][dateStr];
+      if (e && e.shiftCode && EARLY_CODES.includes(e.shiftCode)) {
+        fixedEarlyCount++;
+        alreadyEarlyIds.add(id);
+      }
+    }
+
+    if (fixedEarlyCount >= 2) {
+      // 充足済み：土曜早出の達成だけ更新
+      if (isSat) alreadyEarlyIds.forEach(id => { if (fairIds.includes(id)) satEarlyDone[id] = true; });
+      continue;
+    }
+
+    const needed  = 2 - fixedEarlyCount;
+    const assigned = [];
+
+    // 公平分配グループから候補を絞る
+    const available = fairIds.filter(id =>
+      !alreadyEarlyIds.has(id) && canAssignShift(assignments[id], id, dateStr, allDates, "early")
+    );
+
+    // 土曜：まだ土曜早出未達の人を優先グループとする
+    const satPrio = isSat ? available.filter(id => !satEarlyDone[id]) : [];
+    const restAvail = available.filter(id => !satPrio.includes(id));
+
+    // 各グループ内は早出カウントが少ない順に並べる
+    const byCount = (a, b) => earlyCounts[a] - earlyCounts[b];
+    const sorted  = [...satPrio.sort(byCount), ...restAvail.sort(byCount)];
+
+    for (const id of sorted) {
+      if (assigned.length >= needed) break;
+      doAssign(assignments[id], dateStr, "A");
+      earlyCounts[id]++;
+      alreadyEarlyIds.add(id);
+      if (isSat) satEarlyDone[id] = true;
+      assigned.push(id);
+    }
+
+    // 公平分配だけでは不足 → 調整弁（9番→15番）を使用
+    if (assigned.length < needed) {
+      for (const id of adjusterIds) {
+        if (assigned.length >= needed) break;
+        if (alreadyEarlyIds.has(id)) continue;
+        const days = assignments[id];
+        if (!canAssignShift(days, id, dateStr, allDates, "early")) continue;
+        doAssign(days, dateStr, "A");
+        alreadyEarlyIds.add(id);
+        assigned.push(id);
+      }
+    }
+
+    const total = fixedEarlyCount + assigned.length;
+    if (total < 2) {
+      violations.push({
+        date: dateStr,
+        type: "early_shortage",
+        required: 2,
+        actual: total,
+        message: `${dateStr}：早出が ${total} 名（最低2名必要）`
+      });
+    }
+  }
+
+  // 土曜早出の最低1回チェック
+  for (const id of fairIds) {
+    if (!STAFF_MASTER.find(s => s.id === id).satEarlyRequired) continue;
+    if (satWorkDates.length > 0 && !satEarlyDone[id]) {
+      violations.push({
+        date: null,
+        type: "saturday_early_missing",
+        staffId: id,
+        message: `職員${id}番：月内に土曜早出を1回も割当できませんでした`
+      });
+    }
+  }
+}
+
+// ────────────────────────────────────────────────
 // ユーティリティ
 // ────────────────────────────────────────────────
+
+// スタッフが指定日に早出または遅出を受け取れるか判定
+// category: "early" | "late"
+function canAssignShift(days, staffId, dateStr, allDates, category) {
+  if (!days) return false;
+  const e = days[dateStr];
+  // 固定・不在・既に割当済みなら不可
+  if (e && (e.isFixed || e.isAbsent || e.shiftCode)) return false;
+
+  // 6番看護師ルール：前日が遅出なら翌日早出不可
+  if (category === "early" && staffId === 6) {
+    const prev = days[getPrevDate(dateStr, allDates)];
+    if (prev && prev.shiftCode && LATE_CODES.includes(prev.shiftCode)) return false;
+  }
+  return true;
+}
+
+// allDates 内での前日日付を返す
+function getPrevDate(dateStr, allDates) {
+  const idx = allDates.indexOf(dateStr);
+  return idx > 0 ? allDates[idx - 1] : null;
+}
+
+// 指定セルにシフトコードを書き込む
+function doAssign(days, dateStr, shiftCode) {
+  ensureEntry(days, dateStr);
+  days[dateStr].shiftCode = shiftCode;
+}
 
 // days[dateStr] が存在しない場合にデフォルトエントリを作成
 function ensureEntry(days, dateStr) {
