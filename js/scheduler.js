@@ -121,8 +121,19 @@ function step1AssignHolidays(assignments, allDates, workDates, holidays, holiday
     }
 
     // 残りを候補日全体に均等分散して割当
+    // 他スタッフの公休が少ない日を優先して並べ替え（集中防止）
     const remaining   = needed - assignedSet.size;
     const restCandidates = candidates.filter(d => !assignedSet.has(d));
+    const otherNonFixedIds = STAFF_MASTER
+      .filter(s => s.isAutoTarget && !s.isFixed && s.id !== staffId)
+      .map(s => s.id);
+    restCandidates.sort((dateA, dateB) => {
+      const countOff = d => otherNonFixedIds.filter(id => {
+        const e = assignments[id] && assignments[id][d];
+        return e && e.shiftCode && OFF_CODES.includes(e.shiftCode);
+      }).length;
+      return countOff(dateA) - countOff(dateB);
+    });
     distributeEvenly(days, restCandidates, remaining, assignedSet);
   }
 }

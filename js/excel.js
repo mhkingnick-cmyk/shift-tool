@@ -91,6 +91,12 @@ function parseScheduleSheet(wb) {
         }
       }
 
+      // 赤文字（固定）以外のシフト値は自動割当で上書きするためクリアする
+      // ただしSTAFF_MASTERで isFixed:true のスタッフ（3番など）は固定シフトとして保持
+      const masterIsFixed = typeof STAFF_MASTER !== "undefined" &&
+        STAFF_MASTER.some(s => s.id === staffId && s.isFixed);
+      if (!isFixed && !masterIsFixed) shiftCode = null;
+
       staffShifts[staffId][dateStr] = { shiftCode, isFixed, isAbsent };
     }
   }
