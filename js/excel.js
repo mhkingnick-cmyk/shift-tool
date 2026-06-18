@@ -111,6 +111,23 @@ function writeExcel(scheduleResult) {
   const { year, month, assignments } = scheduleResult;
   const daysInMonth = new Date(year, month, 0).getDate();
 
+  // 行3（日付ヘッダ）の29〜31日目が誤った値になるテンプレートバグを修正
+  // 列D〜AH（index 3〜33）に対して正しいExcelシリアル日付を書き込む
+  const ROW_DATE_IDX = 2; // 0-indexed（Excel行3）
+  const day1Addr = XLSX.utils.encode_cell({ r: ROW_DATE_IDX, c: COL_DAY_OFFSET - 1 });
+  const zFmt = ws[day1Addr] && ws[day1Addr].z ? ws[day1Addr].z : null;
+  const epochUTC = Date.UTC(1899, 11, 30); // Excelシリアル起点
+  for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+    const col    = COL_DAY_OFFSET - 1 + (dayNum - 1);
+    const addr   = XLSX.utils.encode_cell({ r: ROW_DATE_IDX, c: col });
+    const serial = (Date.UTC(year, month - 1, dayNum) - epochUTC) / 86400000;
+    if (!ws[addr]) ws[addr] = {};
+    ws[addr].v = serial;
+    ws[addr].t = "n";
+    if (zFmt) ws[addr].z = zFmt;
+    delete ws[addr].w;
+  }
+
   // 職員行番号のマップを構築
   const range = XLSX.utils.decode_range(ws["!ref"]);
   const staffRowMap = {};
@@ -130,7 +147,7 @@ function writeExcel(scheduleResult) {
       if (entry.isFixed || entry.isAbsent) continue; // 固定セルは変更しない
       if (!entry.shiftCode) continue;
 
-      const d = new Date(dateStr).getDate();
+      const d = parseInt(dateStr.split("-")[2], 10);
       const col = COL_DAY_OFFSET - 1 + (d - 1);
       const cellAddr = XLSX.utils.encode_cell({ r, c: col });
 

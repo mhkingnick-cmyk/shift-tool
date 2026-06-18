@@ -55,8 +55,9 @@ function runScheduler(parsed, params) {
 // STEP1: 公休割当
 // ────────────────────────────────────────────────
 function step1AssignHolidays(assignments, allDates, workDates, holidays, holidayCount, violations) {
+  // part_nursery（4番）は公休も自動割当しない
   const targetIds = STAFF_MASTER
-    .filter(s => s.isAutoTarget && !s.isFixed)
+    .filter(s => s.isAutoTarget && !s.isFixed && s.type !== "part_nursery")
     .map(s => s.id);
 
   // 看護師は最後に処理（お互いの公休状況を考慮するため）
@@ -249,10 +250,10 @@ function step2AssignEarlyShifts(assignments, allDates, workDates, violations, no
   for (const dateStr of workDates) {
     const isSat = new Date(dateStr).getDay() === 6;
 
-    // 既確定の早出をカウント（固定 or STEP1以前に割当済み）
+    // 既確定の早出をカウント（全職員：固定3番など含む）
     let fixedEarlyCount = 0;
     const alreadyEarlyIds = new Set();
-    for (const id of [...fairIds, ...adjusterIds]) {
+    for (const id of Object.keys(assignments).map(Number)) {
       const e = assignments[id] && assignments[id][dateStr];
       if (e && e.shiftCode && EARLY_CODES.includes(e.shiftCode)) {
         fixedEarlyCount++;
@@ -360,10 +361,10 @@ function step3AssignLateShifts(assignments, allDates, workDates, violations, not
   }
 
   for (const dateStr of workDates) {
-    // 既確定の遅出をカウント
+    // 既確定の遅出をカウント（全職員：固定3番など含む）
     let fixedLateCount = 0;
     const alreadyLateIds = new Set();
-    for (const id of [...fairIds, ...adjusterIds]) {
+    for (const id of Object.keys(assignments).map(Number)) {
       const e = assignments[id] && assignments[id][dateStr];
       if (e && e.shiftCode && LATE_CODES.includes(e.shiftCode)) {
         fixedLateCount++;
@@ -501,8 +502,9 @@ function step4AssignMedicalCareNurse(assignments, allDates, workDates, medicalCa
 // STEP5: 日勤割当
 // ────────────────────────────────────────────────
 function step5AssignDayShifts(assignments, allDates, workDates) {
+  // part_nursery（4番）はKazが赤文字で指定した日のみ稼働 → 自動割当対象外
   const autoTargetIds = STAFF_MASTER
-    .filter(s => s.isAutoTarget && !s.isFixed)
+    .filter(s => s.isAutoTarget && !s.isFixed && s.type !== "part_nursery")
     .map(s => s.id);
 
   for (const dateStr of workDates) {
@@ -511,10 +513,7 @@ function step5AssignDayShifts(assignments, allDates, workDates) {
       if (!days) continue;
       const e = days[dateStr];
       if (e && (e.isFixed || e.isAbsent || e.shiftCode)) continue;
-
-      const staff = STAFF_MASTER.find(s => s.id === id);
-      const code  = staff.type === "part_nursery" ? "P2" : "B";
-      doAssign(days, dateStr, code);
+      doAssign(days, dateStr, "C");
     }
   }
 }
@@ -554,9 +553,10 @@ function step6Validate(assignments, allDates, workDates, holidays, violations) {
     for (const dateStr of allDates) {
       if (isClosedDay(dateStr, holidays)) { consecutive = 0; continue; }
       const e = days[dateStr];
-      const isOff    = e && e.shiftCode && OFF_CODES.includes(e.shiftCode);
-      const isAbsent = e && e.isAbsent;
-      if (isOff || isAbsent) {
+      const isOff      = e && e.shiftCode && OFF_CODES.includes(e.shiftCode);
+      const isAbsent   = e && e.isAbsent;
+      const isNoShift  = !e || !e.shiftCode;
+      if (isOff || isAbsent || isNoShift) {
         consecutive = 0;
       } else {
         consecutive++;
