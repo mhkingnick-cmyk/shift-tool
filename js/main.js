@@ -7,9 +7,12 @@ document.getElementById("input-excel").addEventListener("change", async (e) => {
   if (!file) return;
   try {
     parsedData = await loadExcel(file);
+    const { year, month, daysInMonth } = parsedData;
     document.getElementById("upload-status").textContent =
-      `読み込み完了：${parsedData.year}年${parsedData.month}月（${parsedData.daysInMonth}日間）`;
+      `読み込み完了：${year}年${month}月（${daysInMonth}日間）`;
     document.getElementById("btn-run").disabled = false;
+    updateHolidayHint(year, month, daysInMonth);
+
   } catch (err) {
     document.getElementById("upload-status").textContent = "エラー：" + err.message;
   }
@@ -46,6 +49,28 @@ document.getElementById("btn-run").addEventListener("click", () => {
     const wbout = writeExcel(result);
     downloadExcel(wbout, result.year, result.month);
   };
+});
+
+// 「稼働日に割り当てる公休 = 総公休 − 休園日数」をリアルタイム表示
+function updateHolidayHint(year, month, daysInMonth) {
+  const holidays = getJapaneseHolidays(year);
+  let closedCount = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    if (isClosedDay(ds, holidays)) closedCount++;
+  }
+  const total = parseInt(document.getElementById("param-holiday-count").value, 10) || 0;
+  const workday = Math.max(0, total - closedCount);
+  document.getElementById("holiday-calc-hint").textContent =
+    `（休園日 ${closedCount} 日 → 稼働日に割当: ${workday} 日）`;
+}
+
+// 公休日数欄を変更したときもヒントを更新
+document.getElementById("param-holiday-count").addEventListener("input", () => {
+  if (parsedData) {
+    const { year, month, daysInMonth } = parsedData;
+    updateHolidayHint(year, month, daysInMonth);
+  }
 });
 
 // ────────────────────────────────────────────────

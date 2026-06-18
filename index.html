@@ -20,7 +20,10 @@
     <!-- ② パラメータ入力 -->
     <section id="section-params">
       <h2>2. 月間パラメータ</h2>
-      <label>公休日数：<input type="number" id="param-holiday-count" min="0" max="31" value="9"></label>
+      <label>
+        公休日数（月の総休日数）：<input type="number" id="param-holiday-count" min="0" max="31" value="9">
+        <span id="holiday-calc-hint" style="color:#666;font-size:0.85rem;margin-left:0.5rem;"></span>
+      </label>
 
       <div id="medical-care-section">
         <h3>医療的ケア児（該当する場合のみ入力）</h3>

@@ -24,8 +24,13 @@ function runScheduler(parsed, params) {
     }
   }
 
+  // 「公休N日」は日曜・祝日を含む月の総休日数
+  // 稼働日に追加割当する公休数 = N − 休園日数（日曜・祝日・年末年始）
+  const closedDaysCount = allDates.filter(d => isClosedDay(d, holidays)).length;
+  const workdayHolidayCount = Math.max(0, holidayCount - closedDaysCount);
+
   // STEP1: 公休割当
-  step1AssignHolidays(assignments, allDates, workDates, holidays, holidayCount, violations);
+  step1AssignHolidays(assignments, allDates, workDates, holidays, workdayHolidayCount, violations);
 
   // STEP2: 早出割当
   step2AssignEarlyShifts(assignments, allDates, workDates, violations);
