@@ -18,13 +18,6 @@ function runScheduler(parsed, params) {
     if (!isClosedDay(dateStr, holidays)) workDates.push(dateStr);
   }
 
-  // STEP0: 職員3番を全日固定としてマーク
-  if (assignments[3]) {
-    for (const dateStr of allDates) {
-      if (assignments[3][dateStr]) assignments[3][dateStr].isFixed = true;
-    }
-  }
-
   // 「公休N日」は日曜・祝日を含む月の総休日数
   // 稼働日に追加割当する公休数 = N − 休園日数（日曜・祝日・年末年始）
   const closedDaysCount = allDates.filter(d => isClosedDay(d, holidays)).length;

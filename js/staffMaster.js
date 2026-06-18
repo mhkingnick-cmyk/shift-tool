@@ -3,7 +3,7 @@
 const STAFF_MASTER = [
   { id: 1,  type: "fulltime_nursery", isFixed: false, isAutoTarget: true,  adjuster: null,          adjusterPriority: null, fairness: true,  satEarlyRequired: true  },
   { id: 2,  type: "fulltime_nursery", isFixed: false, isAutoTarget: true,  adjuster: null,          adjusterPriority: null, fairness: true,  satEarlyRequired: true  },
-  { id: 3,  type: "fulltime_nursery", isFixed: true,  isAutoTarget: true,  adjuster: null,          adjusterPriority: null, fairness: false, satEarlyRequired: false },
+  { id: 3,  type: "fulltime_nursery", isFixed: false, isAutoTarget: true,  adjuster: null,          adjusterPriority: null, fairness: true,  satEarlyRequired: false },
   { id: 4,  type: "part_nursery",     isFixed: false, isAutoTarget: true,  adjuster: null,          adjusterPriority: null, fairness: false, satEarlyRequired: false },
   { id: 5,  type: "other",            isFixed: false, isAutoTarget: false, adjuster: null,          adjusterPriority: null, fairness: false, satEarlyRequired: false },
   { id: 6,  type: "nurse",            isFixed: false, isAutoTarget: true,  adjuster: null,          adjusterPriority: null, fairness: true,  satEarlyRequired: true  },
