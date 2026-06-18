@@ -43,6 +43,21 @@ document.getElementById("btn-run").addEventListener("click", () => {
     errSection.style.display = "none";
   }
 
+  // 補足情報（15番補充ログ）表示
+  const notesSection = document.getElementById("section-notes");
+  const notesList    = document.getElementById("notes-list");
+  notesList.innerHTML = "";
+  if (result.notes && result.notes.length > 0) {
+    result.notes.forEach(n => {
+      const li = document.createElement("li");
+      li.textContent = n.message;
+      notesList.appendChild(li);
+    });
+    notesSection.style.display = "block";
+  } else {
+    notesSection.style.display = "none";
+  }
+
   // ダウンロードボタン表示
   document.getElementById("section-download").style.display = "block";
   document.getElementById("btn-download").onclick = () => {

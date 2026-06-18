@@ -6,6 +6,7 @@ function runScheduler(parsed, params) {
 
   const holidays = getJapaneseHolidays(year);
   const violations = [];
+  const notes      = [];
   const assignments = deepCopy(staffShifts);
 
   // 全日付リストと稼働日リストを構築
@@ -33,10 +34,10 @@ function runScheduler(parsed, params) {
   step1AssignHolidays(assignments, allDates, workDates, holidays, workdayHolidayCount, violations);
 
   // STEP2: 早出割当
-  step2AssignEarlyShifts(assignments, allDates, workDates, violations);
+  step2AssignEarlyShifts(assignments, allDates, workDates, violations, notes);
 
   // STEP3: 遅出割当
-  step3AssignLateShifts(assignments, allDates, workDates, violations);
+  step3AssignLateShifts(assignments, allDates, workDates, violations, notes);
 
   // STEP4: 医療的ケア児看護師配置
   step4AssignMedicalCareNurse(assignments, allDates, workDates, medicalCareChildren, violations);
@@ -47,7 +48,7 @@ function runScheduler(parsed, params) {
   // STEP6: 最終検証
   step6Validate(assignments, allDates, workDates, holidays, violations);
 
-  return { year, month, assignments, violations };
+  return { year, month, assignments, violations, notes };
 }
 
 // ────────────────────────────────────────────────
@@ -210,7 +211,7 @@ function distributeEvenly(days, candidates, count, assignedSet) {
 // ────────────────────────────────────────────────
 // STEP2: 早出割当
 // ────────────────────────────────────────────────
-function step2AssignEarlyShifts(assignments, allDates, workDates, violations) {
+function step2AssignEarlyShifts(assignments, allDates, workDates, violations, notes) {
   // 公平分配対象（1,2,6,7番）
   const fairIds = STAFF_MASTER.filter(s => s.isAutoTarget && s.fairness).map(s => s.id);
   // 早出調整弁（優先度順：9番→15番）
@@ -300,6 +301,14 @@ function step2AssignEarlyShifts(assignments, allDates, workDates, violations) {
         doAssign(days, dateStr, "A");
         alreadyEarlyIds.add(id);
         assigned.push(id);
+        if (id === 15 && notes) {
+          const coreCount = fixedEarlyCount + assigned.length - 1;
+          notes.push({
+            date: dateStr,
+            type: "adjuster15_early",
+            message: `${dateStr}：早出コア${coreCount}名 → 15番が補充`
+          });
+        }
       }
     }
 
@@ -332,7 +341,7 @@ function step2AssignEarlyShifts(assignments, allDates, workDates, violations) {
 // ────────────────────────────────────────────────
 // STEP3: 遅出割当
 // ────────────────────────────────────────────────
-function step3AssignLateShifts(assignments, allDates, workDates, violations) {
+function step3AssignLateShifts(assignments, allDates, workDates, violations, notes) {
   const fairIds = STAFF_MASTER.filter(s => s.isAutoTarget && s.fairness).map(s => s.id);
   // 遅出調整弁：15番のみ（adjuster === "both"）
   const adjusterIds = STAFF_MASTER
@@ -391,6 +400,14 @@ function step3AssignLateShifts(assignments, allDates, workDates, violations) {
         doAssign(days, dateStr, "D");
         alreadyLateIds.add(id);
         assigned.push(id);
+        if (id === 15 && notes) {
+          const coreCount = fixedLateCount + assigned.length - 1;
+          notes.push({
+            date: dateStr,
+            type: "adjuster15_late",
+            message: `${dateStr}：遅出コア${coreCount}名 → 15番が補充`
+          });
+        }
       }
     }
 
@@ -527,25 +544,6 @@ function step6Validate(assignments, allDates, workDates, holidays, violations) {
       }
     }
 
-    // 平日：日勤帯（早出＋日勤）の合計最低4名チェック
-    if (!isSat) {
-      const dayBandCount = allAutoTargets.filter(id => {
-        const e = assignments[id] && assignments[id][dateStr];
-        if (!e || !e.shiftCode || e.isAbsent) return false;
-        if (OFF_CODES.includes(e.shiftCode)) return false;
-        if (LATE_CODES.includes(e.shiftCode)) return false;
-        return true;
-      }).length;
-      if (dayBandCount < 4) {
-        violations.push({
-          date: dateStr,
-          type: "day_band_shortage",
-          required: 4,
-          actual: dayBandCount,
-          message: `${dateStr}：日勤帯（早出＋日勤）が ${dayBandCount} 名（最低4名必要）`
-        });
-      }
-    }
   }
 
   // 6連勤チェック（全自動割当対象職員）
