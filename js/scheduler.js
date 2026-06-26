@@ -82,6 +82,9 @@ function runScheduler(parsed, params) {
       return e && e.shiftCode === "休" && !e.isFixed;
     });
     if (members.length >= 2) {
+      // 4番（part_nursery）が出勤している日は制限緩和（エラーとしない）
+      const s4 = assignments[4]?.[dateStr];
+      if (s4 && s4.shiftCode && !OFF_CODES.includes(s4.shiftCode)) continue;
       violations.push({ date: dateStr, type: "fair_double_holiday",
         staffIds: members,
         message: `${dateStr}：フェアメンバー${members.join("・")}番が同日非固定休` });
