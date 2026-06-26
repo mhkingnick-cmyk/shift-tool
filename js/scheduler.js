@@ -38,7 +38,7 @@ function runScheduler(parsed, params) {
   // 9番・15番が日勤(C)のとき配置基準カウント対象外のため、
   // step7/step8 では早出・遅出コード以外のカウントに9番・15番を含めない。
   step7BalanceHolidays(assignments, allDates, workDates, holidays, holidayCount, notes, eventWorkDays);
-  step8BalanceEarlyLate(assignments, allDates, workDates, notes);
+  step8BalanceEarlyLate(assignments, allDates, workDates, notes, "[Stage2]", 1);
 
   // ━━━━ STAGE 3: スワップ最適化 ━━━━
   step9OptimizeBySwap(assignments, allDates, workDates, holidays, holidayCount, eventWorkDays, violations, notes);
@@ -59,6 +59,35 @@ function runScheduler(parsed, params) {
   violations.length = 0;
   step6Validate(assignments, allDates, workDates, holidays, violations, eventWorkDays);
 
+  // 最終追加チェック: 公休数不一致（「休」のみカウント、「有」は含まない）
+  const _finalTargetIds = STAFF_MASTER
+    .filter(s => s.isAutoTarget && !s.isFixed && s.type !== "part_nursery")
+    .map(s => s.id);
+  for (const id of _finalTargetIds) {
+    const cnt = allDates.reduce((c, d) => {
+      const e = assignments[id]?.[d];
+      return c + (e && e.shiftCode === "休" ? 1 : 0);
+    }, 0);
+    if (Math.abs(cnt - holidayCount) >= 2) {
+      violations.push({ date: null, type: "holiday_count_mismatch", staffId: id,
+        actualCount: cnt,
+        message: `職員${id}番：公休${cnt}日（目標${holidayCount}日）` });
+    }
+  }
+  // 最終追加チェック: フェアメンバー同日2名非固定休
+  const _finalFairIds = STAFF_MASTER.filter(s => s.isAutoTarget && s.fairness).map(s => s.id);
+  for (const dateStr of workDates) {
+    const members = _finalFairIds.filter(id => {
+      const e = assignments[id]?.[dateStr];
+      return e && e.shiftCode === "休" && !e.isFixed;
+    });
+    if (members.length >= 2) {
+      violations.push({ date: dateStr, type: "fair_double_holiday",
+        staffIds: members,
+        message: `${dateStr}：フェアメンバー${members.join("・")}番が同日非固定休` });
+    }
+  }
+
   return { year, month, assignments, violations, notes };
 }
 
@@ -72,6 +101,7 @@ function step1AssignHolidays(assignments, allDates, workDates, holidays, holiday
 
   const nurseIds    = targetIds.filter(id => STAFF_MASTER.find(m => m.id === id).type === "nurse");
   const nonNurseIds = targetIds.filter(id => !nurseIds.includes(id));
+  const fairIds     = STAFF_MASTER.filter(s => s.fairness).map(s => s.id);
 
   for (const staffId of [...nonNurseIds, ...nurseIds]) {
     const days = assignments[staffId];
@@ -80,14 +110,14 @@ function step1AssignHolidays(assignments, allDates, workDates, holidays, holiday
     let fixedOffCount = 0;
     for (const dateStr of allDates) {
       const e = days[dateStr];
-      if (!e || !e.shiftCode) continue;
+      if (!e || !e.shiftCode || e.isAbsent) continue;
       if (isClosedDay(dateStr, holidays)) {
         // 休園日（イベント出勤日含む）：固定・非固定問わずテンプレートの「休」をカウント
         if (HOLIDAY_CODES.includes(e.shiftCode)) fixedOffCount += 1;
       } else {
-        // 稼働日：赤文字（固定）セルのみカウント
+        // 稼働日：赤文字（固定）セルのみカウント（「有」は公休目標に含まない）
         if (!e.isFixed) continue;
-        if (HOLIDAY_CODES.includes(e.shiftCode)) {
+        if (e.shiftCode === "休") {
           fixedOffCount += 1;
         } else {
           const st = getShiftType(e.shiftCode);
@@ -117,6 +147,22 @@ function step1AssignHolidays(assignments, allDates, workDates, holidays, holiday
         });
         if (nonConflict.length >= needed) candidates = nonConflict;
       }
+    }
+
+    // フェアメンバー（fairness:true）の同日非固定「休」を1名に制限
+    if (fairIds.includes(staffId)) {
+      const otherFairIds = fairIds.filter(id => id !== staffId);
+      const noDoubleOff = candidates.filter(dateStr => {
+        const otherHasNonFixedOff = otherFairIds.some(id => {
+          const oe = assignments[id] && assignments[id][dateStr];
+          return oe && oe.shiftCode === "休" && !oe.isFixed;
+        });
+        if (!otherHasNonFixedOff) return true;
+        // 例外: 4番（part_nursery）が出勤している日は制限緩和
+        const s4 = assignments[4] && assignments[4][dateStr];
+        return s4 && s4.shiftCode && !OFF_CODES.includes(s4.shiftCode);
+      });
+      if (noDoubleOff.length >= needed) candidates = noDoubleOff;
     }
 
     if (candidates.length < needed) {
@@ -916,12 +962,15 @@ function step9OptimizeBySwap(assignments, allDates, workDates, holidays, holiday
   const targetIds = STAFF_MASTER
     .filter(s => s.isAutoTarget && !s.isFixed && s.type !== "part_nursery")
     .map(s => s.id);
+  const fairIds = STAFF_MASTER.filter(s => s.fairness).map(s => s.id);
 
   const WEIGHTS = {
     consecutive_days_exceeded:    10,
     both_nurses_off:               8,
     early_shortage:                6,
+    early_excess:                  6,
     late_shortage:                 4,
+    late_excess:                   4,
     holiday_count_mismatch:        3,
     nurse6_late_early_consecutive: 2,
   };
@@ -972,6 +1021,34 @@ function step9OptimizeBySwap(assignments, allDates, workDates, holidays, holiday
           const ns = scoreOf(detectViols());
           if (ns < curScore) { curScore = ns; totalSwaps++; improved = true; break outerA; }
           setCode(idA, d, cA); setCode(idB, d, cB);
+        }
+      }
+    }
+
+    if (improved) continue;
+
+    // ─ Type C: 早出不足日のフェアメンバー非固定「休」を別日Cとスワップ後「A」化 ─
+    outerC:
+    for (const d of workDates) {
+      let ecD = 0;
+      for (const aid of Object.keys(assignments).map(Number)) {
+        const e = assignments[aid]?.[d];
+        if (e?.shiftCode && EARLY_CODES.includes(e.shiftCode)) ecD++;
+      }
+      if (ecD >= 2) continue;
+      for (const id of fairIds) {
+        if (!swappable(id, d)) continue;
+        if (getCode(id, d) !== "休") continue;
+        for (const d2 of workDates) {
+          if (d2 === d) continue;
+          if (!swappable(id, d2)) continue;
+          if (getCode(id, d2) !== "C") continue;
+          setCode(id, d, "A");
+          setCode(id, d2, "休");
+          const ns = scoreOf(detectViols());
+          if (ns < curScore) { curScore = ns; totalSwaps++; improved = true; break outerC; }
+          setCode(id, d, "休");
+          setCode(id, d2, "C");
         }
       }
     }
@@ -1037,8 +1114,10 @@ function step9CollectViolations(assignments, allDates, workDates, holidays, holi
       if (EARLY_CODES.includes(e.shiftCode)) ec++;
       if (LATE_CODES.includes(e.shiftCode)) lc++;
     }
-    if (ec < 2) viols.push({ date: d, type: "early_shortage",  message: `${d}：早出${ec}名` });
+    if (ec < 2) viols.push({ date: d, type: "early_shortage", message: `${d}：早出${ec}名` });
+    if (ec > 2) viols.push({ date: d, type: "early_excess",  excessCount: ec, message: `${d}：早出${ec}名（超過）` });
     if (lc < 2) viols.push({ date: d, type: "late_shortage", message: `${d}：遅出${lc}名` });
+    if (lc > 2) viols.push({ date: d, type: "late_excess",   excessCount: lc, message: `${d}：遅出${lc}名（超過）` });
   }
 
   // 看護師同日休
@@ -1135,10 +1214,15 @@ function step6Validate(assignments, allDates, workDates, holidays, violations, e
       });
       violations.push({ date: dateStr,
         type: canResolveEarlyBySwap ? "early_shortage" : "structural_early_shortage",
+        earlyCount,
         message: canResolveEarlyBySwap
           ? `${dateStr}：早出が ${earlyCount} 名（最低2名必要）`
           : `${dateStr}：早出が ${earlyCount} 名（最低2名必要）【テンプレート要見直し】`
       });
+    }
+    if (!isEventDay && earlyCount > 2) {
+      violations.push({ date: dateStr, type: "early_excess", excessCount: earlyCount,
+        message: `${dateStr}：早出が ${earlyCount} 名（2名超過）` });
     }
 
     // 遅出不足チェック（全職員対象 — 9番・15番がDなら含む）
@@ -1166,6 +1250,10 @@ function step6Validate(assignments, allDates, workDates, holidays, violations, e
         lateCount
       });
     }
+    if (!isEventDay && lateCount > 2) {
+      violations.push({ date: dateStr, type: "late_excess", excessCount: lateCount,
+        message: `${dateStr}：遅出が ${lateCount} 名（2名超過）` });
+    }
 
     // 看護師2名同時休チェック
     // ただし全員の「休」が赤文字固定（isFixed=true）の場合は変更不可のため違反報告から除外する
@@ -1192,22 +1280,25 @@ function step6Validate(assignments, allDates, workDates, holidays, violations, e
     const days = assignments[id];
     if (!days) continue;
     let consecutive = 0;
+    let runStart = null;
     for (const dateStr of allDates) {
       // 通常の休園日はリセット。イベント出勤日は稼働日として連勤カウントを継続。
       if (isClosedDay(dateStr, holidays) && (!eventWorkDays || !eventWorkDays.has(dateStr))) {
-        consecutive = 0; continue;
+        consecutive = 0; runStart = null; continue;
       }
       const e = days[dateStr];
       const isOff     = e && e.shiftCode && OFF_CODES.includes(e.shiftCode);
       const isAbsent  = e && e.isAbsent;
       const isNoShift = !e || !e.shiftCode;
-      if (isOff || isAbsent || isNoShift) { consecutive = 0; }
+      if (isOff || isAbsent || isNoShift) { consecutive = 0; runStart = null; }
       else {
+        if (consecutive === 0) runStart = dateStr;
         consecutive++;
         if (consecutive > 5) {
           violations.push({ date: dateStr, type: "consecutive_days_exceeded", staffId: id,
+            runStart,
             message: `職員${id}番：${dateStr}で6連勤以上（上限5連勤）` });
-          consecutive = 0;
+          consecutive = 0; runStart = null;
         }
       }
     }
@@ -1226,6 +1317,7 @@ function step6Validate(assignments, allDates, workDates, holidays, violations, e
         curE  && curE.shiftCode  && EARLY_CODES.includes(curE.shiftCode)
       ) {
         violations.push({ date: curDate, type: "nurse6_late_early_consecutive",
+          prevDate,
           message: `${curDate}：6番看護師が遅出翌日に早出（制約違反）` });
       }
     }

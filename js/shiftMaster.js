@@ -29,6 +29,9 @@ const LATE_CODES = ["D", "D1", "E", "E1", "F"];
 // 公休扱いコード
 const OFF_CODES = ["休", "有"];
 
+// 公休カウント・スワップ保護対象コード（OFF_CODES と同義）
+const HOLIDAY_CODES = ["休", "有"];
+
 function getShiftType(code) {
   return SHIFT_TYPES.find(s => s.code === code) || null;
 }

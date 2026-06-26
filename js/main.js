@@ -60,8 +60,8 @@ document.getElementById("btn-run").addEventListener("click", () => {
 
   // ダウンロードボタン表示
   document.getElementById("section-download").style.display = "block";
-  document.getElementById("btn-download").onclick = () => {
-    const wbout = writeExcel(result);
+  document.getElementById("btn-download").onclick = async () => {
+    const wbout = await writeExcel(result);
     downloadExcel(wbout, result.year, result.month);
   };
 });

@@ -117,23 +117,46 @@ async function writeExcel(scheduleResult) {
     setStringCell(doc, cellEl, dow + "★");
   }
 
-  // 修正3: 構造的遅出不足が残った日をAM列（row4）に記入
+  // AN列（row4）に全エラーサマリーを常時記入
   {
-    const structuralLateViolations = (scheduleResult.violations || [])
-      .filter(v => v.type === "structural_late_shortage" && v.date);
-    if (structuralLateViolations.length > 0) {
-      const parts = structuralLateViolations.map(v => {
-        const dayNum  = parseInt(v.date.split("-")[2], 10);
-        const shortage = 2 - (v.lateCount !== undefined ? v.lateCount : 0);
-        return `${dayNum}日(${shortage}名不足)`;
-      });
-      const text    = `遅出不足：${parts.join("、")}`;
-      const amCol0  = 38; // AM = 1-based col 39 → 0-based 38
-      const amRow0  = 3;  // row 4 (1-based) → 0-based 3
-      const amAddr  = XLSX.utils.encode_cell({ r: amRow0, c: amCol0 });
-      const amCellEl = findOrCreateCell(doc, amRow0 + 1, amCol0 + 1, amAddr);
-      setStringCell(doc, amCellEl, text);
-    }
+    const viols = scheduleResult.violations || [];
+
+    const lateV       = viols.filter(v => v.type === "late_shortage" || v.type === "structural_late_shortage");
+    const earlyV      = viols.filter(v => v.type === "early_shortage" || v.type === "structural_early_shortage");
+    const earlyExcessV = viols.filter(v => v.type === "early_excess");
+    const lateExcessV  = viols.filter(v => v.type === "late_excess");
+    const consV       = viols.filter(v => v.type === "consecutive_days_exceeded");
+    const fairV       = viols.filter(v => v.type === "fair_double_holiday");
+    const n6V         = viols.filter(v => v.type === "nurse6_late_early_consecutive");
+    const holV        = viols.filter(v => v.type === "holiday_count_mismatch");
+
+    const fmt = (arr, fn) => arr.length === 0 ? "なし" : arr.map(fn).join("、");
+
+    const earlyText      = fmt(earlyV,      v => { const d = parseInt(v.date.split("-")[2], 10); const sh = 2 - (v.earlyCount ?? 0); return `${d}日(${sh}名不足)`; });
+    const earlyExcessText = fmt(earlyExcessV, v => { const d = parseInt(v.date.split("-")[2], 10); const ex = (v.excessCount ?? 2) - 2; return `${d}日(${ex}名過剰)`; });
+    const lateText       = fmt(lateV,       v => { const d = parseInt(v.date.split("-")[2], 10); const sh = 2 - (v.lateCount  ?? 0); return `${d}日(${sh}名不足)`; });
+    const lateExcessText  = fmt(lateExcessV,  v => { const d = parseInt(v.date.split("-")[2], 10); const ex = (v.excessCount ?? 2) - 2; return `${d}日(${ex}名過剰)`; });
+    const consText       = fmt(consV,       v => { const d = parseInt(v.date.split("-")[2], 10); const ds = v.runStart ? parseInt(v.runStart.split("-")[2], 10) : null; return ds ? `${v.staffId}番(${ds}〜${d}日)` : `${v.staffId}番(${d}日)`; });
+    const fairText       = fmt(fairV,       v => { const d = parseInt(v.date.split("-")[2], 10); return `${d}日(${(v.staffIds || []).join("・")}番)`; });
+    const n6Text         = fmt(n6V,         v => { const d = parseInt(v.date.split("-")[2], 10); const pd = v.prevDate ? parseInt(v.prevDate.split("-")[2], 10) : d - 1; return `${pd}日→${d}日`; });
+    const holText        = fmt(holV,        v => `${v.staffId}番(${v.actualCount !== undefined ? v.actualCount : "?"}日)`);
+
+    const allOk = earlyV.length === 0 && earlyExcessV.length === 0 &&
+                  lateV.length  === 0 && lateExcessV.length  === 0 &&
+                  consV.length  === 0 && fairV.length === 0 && n6V.length === 0 && holV.length === 0;
+
+    const anText = allOk
+      ? "全項目クリア"
+      : [`早出不足：${earlyText}`, `早出過剰：${earlyExcessText}`,
+         `遅出不足：${lateText}`,  `遅出過剰：${lateExcessText}`,
+         `連勤超過：${consText}`, `フェア同日2名非固定休：${fairText}`,
+         `6番遅出翌日早出：${n6Text}`, `公休数不一致：${holText}`].join("\n");
+
+    const anCol0 = 39; // AN = 1-based col 40 → 0-based 39
+    const anRow0 = 3;  // row 4 (1-based) → 0-based 3
+    const anAddr = XLSX.utils.encode_cell({ r: anRow0, c: anCol0 });
+    const anCellEl = findOrCreateCell(doc, anRow0 + 1, anCol0 + 1, anAddr);
+    setStringCell(doc, anCellEl, anText);
   }
 
   // ③ 変更した DOM を文字列にシリアライズ
@@ -537,7 +560,8 @@ function buildStyleInfo(wb, sheetXml) {
     fills.forEach((fill, i) => {
       if (!fill || !fill.fgColor) return;
       const rgb = (fill.fgColor.rgb || "").toUpperCase();
-      if (/^FF[A-F0-9]{2}[3-8][0-9A-F]00$/i.test(rgb) || rgb === "FFFFA500") {
+      // SheetJS strips alpha; rgb is 6-char RRGGBB (e.g. "FFC000", not "FFFFC000")
+      if (/^[A-F0-9]{2}[3-8][0-9A-F]00$/i.test(rgb) || rgb === "FFA500" || rgb === "FFC000") {
         orangeFillIds.add(i);
       }
     });
