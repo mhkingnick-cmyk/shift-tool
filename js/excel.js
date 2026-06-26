@@ -145,18 +145,31 @@ async function writeExcel(scheduleResult) {
                   lateV.length  === 0 && lateExcessV.length  === 0 &&
                   consV.length  === 0 && fairV.length === 0 && n6V.length === 0 && holV.length === 0;
 
-    const anText = allOk
-      ? "全項目クリア"
-      : [`早出不足：${earlyText}`, `早出過剰：${earlyExcessText}`,
-         `遅出不足：${lateText}`,  `遅出過剰：${lateExcessText}`,
-         `連勤超過：${consText}`, `フェア同日2名非固定休：${fairText}`,
-         `6番遅出翌日早出：${n6Text}`, `公休数不一致：${holText}`].join("\n");
+    const apCol0 = 41;      // AP = 1-based col 42 → 0-based 41
+    const apStartRow0 = 3;  // row 4 (1-based) → 0-based 3
 
-    const anCol0 = 39; // AN = 1-based col 40 → 0-based 39
-    const anRow0 = 3;  // row 4 (1-based) → 0-based 3
-    const anAddr = XLSX.utils.encode_cell({ r: anRow0, c: anCol0 });
-    const anCellEl = findOrCreateCell(doc, anRow0 + 1, anCol0 + 1, anAddr);
-    setStringCell(doc, anCellEl, anText);
+    if (allOk) {
+      const addr = XLSX.utils.encode_cell({ r: apStartRow0, c: apCol0 });
+      const cellEl = findOrCreateCell(doc, apStartRow0 + 1, apCol0 + 1, addr);
+      setStringCell(doc, cellEl, "全項目クリア");
+    } else {
+      const apLines = [
+        `早出不足：${earlyText}`,
+        `早出過剰：${earlyExcessText}`,
+        `遅出不足：${lateText}`,
+        `遅出過剰：${lateExcessText}`,
+        `連勤超過：${consText}`,
+        `フェア同日2名非固定休：${fairText}`,
+        `6番遅出翌日早出：${n6Text}`,
+        `公休数不一致：${holText}`,
+      ];
+      for (let i = 0; i < apLines.length; i++) {
+        const row0 = apStartRow0 + i;
+        const addr = XLSX.utils.encode_cell({ r: row0, c: apCol0 });
+        const cellEl = findOrCreateCell(doc, row0 + 1, apCol0 + 1, addr);
+        setStringCell(doc, cellEl, apLines[i]);
+      }
+    }
   }
 
   // ③ 変更した DOM を文字列にシリアライズ
@@ -648,7 +661,9 @@ function parseScheduleSheet(wb, redXfSet, orangeXfSet, cellStyleMap) {
 
       // 稼働日の非固定セルはクリア（スケジューラが再割当）
       // 休園日は非固定でも値を保持（公休数カウントに必要 + 出力でも保持される）
-      if (!isFixed && !isClosed) shiftCode = null;
+      // part_nursery（4番）は全STEP対象外のためクリアしない（fair_double_holidayの除外判定に必要）
+      const _sm = STAFF_MASTER ? STAFF_MASTER.find(s => s.id === staffId) : null;
+      if (!isFixed && !isClosed && (!_sm || _sm.type !== "part_nursery")) shiftCode = null;
 
       staffShifts[staffId][dateStr] = { shiftCode, isFixed, isAbsent };
     }
